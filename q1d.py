@@ -10,17 +10,22 @@ from numba import jitclass          # import the decorator
 
 class Simulation_data:
     def __init__(self, filename = "input.in"):
-        self.n_elem         = 100
+        self.n_elem         = 10
         self.iterations_max = 60000
-        self.CFL            = 2
-        self.scalar_eps     = 1.0
+        self.it_print       = 20
+        self.tolerance      = 1e-14
+
+        self.tolerance      = self.tolerance**2
+
+        self.CFL            = 1.2
+        self.scalar_eps     = 0.5
 
         self.gamma         = 1.4
         self.R             = 1.0
 
-        self.inlet_mach    = 1.2
         self.inlet_total_T = 1.0
         self.inlet_total_p = 1.0
+        self.inlet_mach    = 1.75
         self.outlet_p      = 0.92
 
 class Mesh:
@@ -130,14 +135,15 @@ class Solver:
         self.dt = (self.sim.CFL * self.mesh.dx) / np.abs(self.u + self.c)
 
     def solve_steady(self):
-        for i in range(self.sim.iterations_max):
+        for flow_iteration in range(self.sim.iterations_max):
             self.step_in_time()
 
             self.BC_inlet()
             self.BC_outlet()
 
-            normR = np.sqrt(np.sum((self.residual[0,:])**2))
-            if i%100==0: print("Iterations %d \t Residual1 %e" % (i, normR))
+            normR = np.sum((self.residual[0,:])**2)
+            if normR < self.sim.tolerance: return
+            if flow_iteration%self.sim.it_print==0: print("Iterations %d \t Residual1 %e" % (flow_iteration, np.sqrt(normR)))
             if(np.isnan(normR)):
                 print("\n\nself.W  \n",self.W)
                 return
@@ -151,12 +157,14 @@ class Solver:
         # Must be done after residual since it uses the primitive variable.
         self.update_dt()
 
-        Wkp1 = self.W
+        old_W = self.W
         for rk_state in range(1,5):
             self.evaluate_residual();
-            Wkp1 = self.W - (self.dt / (5.0 - rk_state)) * self.residual / self.mesh.volume
+            self.W = self.W - (self.dt / self.mesh.volume) / (5.0 - rk_state) * self.residual 
 
-        self.dW = (Wkp1 - self.W)
+        self.dW = (self.W-old_W)
+        self.W = old_W
+
 
         #for i in range(3):
         #    self.dW[i,1:-1] = -(self.dt[1:-1] / self.mesh.volume[1:-1]) * self.residual[i,1:-1]
