@@ -4,9 +4,7 @@ import numpy as np
 from numpy.linalg import norm
 #from scipy.interpolate import BSpline
 import matplotlib.pyplot as plt
-from numba import jit
-from numba import jitclass          # import the decorator
-#import numba
+import autograd
 
 class Simulation_data:
     def __init__(self, filename = "input.in"):
@@ -48,44 +46,31 @@ class Mesh:
         self.volume = self.evaluate_volume(self.area[:-1], self.area[1:], self.dx)
 
 
-#@jit(nopython=True)
 def evaluate_rho(p, T, R):
     return p / (R * T)
-#@jit(nopython=True)
 def evaluate_c(p, rho, gamma):
     return np.sqrt(gamma * p / rho)
-#@jit(nopython=True)
 def evaluate_u(c, mach):
     return c * mach
-#@jit(nopython=True)
 def evaluate_mach(u, c): 
     return u/c
-#@jit(nopython=True)
 def evaluate_e(rho, T, u, Cv):
     return rho * (Cv * T + 0.5 * u*u)
-#@jit(nopython=True)
 def isentropic_T(total_T, mach, gamma):
     return total_T / (1.0 + (gamma - 1.0) / 2.0 * mach * mach)
-#@jit(nopython=True)
 def isentropic_p(total_p, mach, gamma):
     return total_p * (1.0 + (gamma - 1.0) / 2.0 * mach*mach)**(-gamma/(gamma-1.0))
-#@jit(nopython=True)
 def evaluate_e(rho, T, u, Cv ):
     return rho * (Cv * T + 0.5 * u*u)
-#@jit(nopython=True)
 def evaluate_p(rho, rho_u, e, gamma):
     return (gamma - 1.0) * (e - (rho_u**2/rho)/2)
 
 class Solver:
-    #@jit(nopython=True)
     def evaluate_primitive_from_state(self, W):
         rho = W[0,:]
         u = W[1,:] / W[0,:]
         p = evaluate_p(W[0,:], W[1,:], W[2,:], self.gamma)
         return rho, u, p
-    def evaluate_auxiliary_from_primitive(self):
-        self.c = evaluate_c(self.p, self.rho, self.gamma)
-        self.mach = evaluate_mach(self.u, self.c)
 
     def __init__(self, mesh, simulation_data):
         # State     variables: rho, rho*u, e
@@ -164,7 +149,6 @@ class Solver:
 
         self.dW = (self.W-old_W)
         self.W = old_W
-
 
         #for i in range(3):
         #    self.dW[i,1:-1] = -(self.dt[1:-1] / self.mesh.volume[1:-1]) * self.residual[i,1:-1]
@@ -306,12 +290,6 @@ def main():
     
     q1d = Solver(mesh, sim_data)
     q1d.solve_steady()
-    #plt.figure(100);plt.legend();plt.plot(q1d.mesh.xh, q1d.rho[:],'s')
-    #plt.figure(101);plt.legend();plt.plot(q1d.mesh.xh, q1d.u[:],'s')
-    #plt.figure(102);plt.legend();plt.plot(q1d.mesh.xh, q1d.p[:],'s')
-    #plt.figure(200);plt.legend();plt.plot(q1d.mesh.xh, q1d.W[0,:],'s')
-    #plt.figure(201);plt.legend();plt.plot(q1d.mesh.xh, q1d.W[1,:],'s')
-    #plt.figure(202);plt.legend();plt.plot(q1d.mesh.xh, q1d.W[2,:],'s')
 
     #plt.figure(1)
     #plt.plot(mesh.x, mesh.area,'-o')
