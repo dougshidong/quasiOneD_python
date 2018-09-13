@@ -1,21 +1,24 @@
 #! /usr/bin/python3
 import sys
 import numpy as np
-from scipy.interpolate import BSpline
+from numpy.linalg import norm
+#from scipy.interpolate import BSpline
 import matplotlib.pyplot as plt
-
+from numba import jit
+from numba import jitclass          # import the decorator
+#import numba
 
 class Simulation_data:
     def __init__(self, filename = "input.in"):
         self.n_elem         = 100
         self.iterations_max = 60000
-        self.CFL            = 0.2
-        self.scalar_eps     = 0.5
+        self.CFL            = 2
+        self.scalar_eps     = 1.0
 
         self.gamma         = 1.4
         self.R             = 1.0
 
-        self.inlet_mach    = 0.75
+        self.inlet_mach    = 1.2
         self.inlet_total_T = 1.0
         self.inlet_total_p = 1.0
         self.outlet_p      = 0.92
@@ -40,18 +43,36 @@ class Mesh:
         self.volume = self.evaluate_volume(self.area[:-1], self.area[1:], self.dx)
 
 
-evaluate_rho = lambda p, T, R: p / (R * T)
-evaluate_c   = lambda p, rho, gamma: np.sqrt(gamma * p / rho)
-evaluate_u   = lambda c, mach: c * mach
-evaluate_mach= lambda u, c: u/c
-evaluate_e   = lambda rho, T, u, Cv: rho * (Cv * T + 0.5 * u*u)
-isentropic_T = lambda total_T, mach, gamma: total_T / (1.0 + (gamma - 1.0) / 2.0 * mach * mach)
-isentropic_p = lambda total_p, mach, gamma: total_p * (1.0 + (gamma - 1.0) / 2.0 * mach*mach)**(-gamma/(gamma-1.0))
-evaluate_e   = lambda rho, T, u, Cv : rho * (Cv * T + 0.5 * u*u)
-evaluate_p   = lambda rho, rho_u, e, gamma: (gamma - 1.0) * (e - (rho_u**2/rho)/2)
+#@jit(nopython=True)
+def evaluate_rho(p, T, R):
+    return p / (R * T)
+#@jit(nopython=True)
+def evaluate_c(p, rho, gamma):
+    return np.sqrt(gamma * p / rho)
+#@jit(nopython=True)
+def evaluate_u(c, mach):
+    return c * mach
+#@jit(nopython=True)
+def evaluate_mach(u, c): 
+    return u/c
+#@jit(nopython=True)
+def evaluate_e(rho, T, u, Cv):
+    return rho * (Cv * T + 0.5 * u*u)
+#@jit(nopython=True)
+def isentropic_T(total_T, mach, gamma):
+    return total_T / (1.0 + (gamma - 1.0) / 2.0 * mach * mach)
+#@jit(nopython=True)
+def isentropic_p(total_p, mach, gamma):
+    return total_p * (1.0 + (gamma - 1.0) / 2.0 * mach*mach)**(-gamma/(gamma-1.0))
+#@jit(nopython=True)
+def evaluate_e(rho, T, u, Cv ):
+    return rho * (Cv * T + 0.5 * u*u)
+#@jit(nopython=True)
+def evaluate_p(rho, rho_u, e, gamma):
+    return (gamma - 1.0) * (e - (rho_u**2/rho)/2)
 
 class Solver:
-
+    #@jit(nopython=True)
     def evaluate_primitive_from_state(self, W):
         rho = W[0,:]
         u = W[1,:] / W[0,:]
@@ -62,13 +83,13 @@ class Solver:
         self.mach = evaluate_mach(self.u, self.c)
 
     def __init__(self, mesh, simulation_data):
+        # State     variables: rho, rho*u, e
+        # Primitive variables: rho, u, p
+        # Auxiliary variables: c, mach
 
         self.sim                  = simulation_data
         self.mesh                 = mesh
-        self.iterations_max       = simulation_data.iterations_max
-        self.n_elem               = simulation_data.n_elem
 
-        self.scalar_eps           = simulation_data.scalar_eps
         self.gamma                = simulation_data.gamma
         self.R                    = simulation_data.R
         self.Cv                   = self.R / (self.gamma - 1.0);
@@ -77,22 +98,19 @@ class Solver:
         self.inlet_total_p        = simulation_data.inlet_total_p
         self.inlet_total_T        = simulation_data.inlet_total_T
 
-        self.a2 = 2.0*self.gamma*self.Cv*self.inlet_total_T*((self.gamma - 1.0) / (self.gamma + 1.0));
+        self.a2 = 2.0*self.gamma*self.Cv*self.inlet_total_T \
+            *((self.gamma - 1.0) / (self.gamma + 1.0));
+
         inlet_p         = isentropic_p(self.inlet_total_p, self.inlet_mach, self.gamma)
         self.outlet_p   = simulation_data.outlet_p
 
-        self.p = np.linspace(inlet_p, self.outlet_p, self.n_elem, endpoint=True)
-        self.p[1:] = self.outlet_p
-        self.p[0] = inlet_p
+        self.p = np.linspace(inlet_p, self.outlet_p, self.mesh.n_elem, endpoint=True)
         T = isentropic_T(self.inlet_total_T, self.inlet_mach, self.gamma)
         self.rho = evaluate_rho(self.p, T, self.R)
         self.c = evaluate_c(self.p, self.rho, self.gamma)
         self.u = evaluate_u(self.c, self.inlet_mach)
         self.e = evaluate_e(self.rho, T, self.u, self.Cv)
 
-        # State     variables: rho, rho*u, e
-        # Primitive variables: rho, u, p
-        # Auxiliary variables: c, mach, T
         self.dt = np.empty_like(self.mesh.volume)
         self.W = np.empty([3, self.sim.n_elem])
         self.W = np.array([self.rho, self.rho*self.u, evaluate_e(self.rho, T, self.u, self.Cv)])
@@ -106,15 +124,9 @@ class Solver:
         self.evaluate_convective_state()
         self.evaluate_source_state()
 
-        self.fluxes = np.empty([3,self.n_elem+1])
-        #self.evaluate_residual()
-        #print("\n\nresidual000\n",self.residual[:,1:-1])
-        #print("\n\nfluxeso0000\n",self.fluxes[:,1:-1])
+        self.fluxes = np.empty([3,self.mesh.n_elem+1])
 
     def update_dt(self):
-        self.rho, self.u, self.p = self.evaluate_primitive_from_state(self.W)
-        self.c = evaluate_c(self.p, self.rho, self.gamma)
-
         self.dt = (self.sim.CFL * self.mesh.dx) / np.abs(self.u + self.c)
 
     def solve_steady(self):
@@ -124,39 +136,50 @@ class Solver:
             self.BC_inlet()
             self.BC_outlet()
 
+            normR = np.sqrt(np.sum((self.residual[0,:])**2))
             if i%100==0: print("Iterations %d \t Residual1 %e" % (i, normR))
-
-            normR = np.linalg.norm(self.residual[0,:])
-            normW0 = np.linalg.norm(self.W[0,:])
-            normW1 = np.linalg.norm(self.W[1,:])
-            normW2 = np.linalg.norm(self.W[2,:])
-            if(np.isnan(normR) or np.isnan(normW0) or np.isnan(normW1) or np.isnan(normW2)):
+            if(np.isnan(normR)):
                 print("\n\nself.W  \n",self.W)
                 return
     def step_in_time(self):
         self.evaluate_dw()
         self.W = self.W + self.dW
     def evaluate_dw(self):
-        self.update_dt()
+
         self.evaluate_residual()
-        for i in range(3):
-            self.dW[i,1:-1] = -(self.dt[1:-1] / self.mesh.volume[1:-1]) * self.residual[i,1:-1]
+        # Update time step based on maximum eigenvalue.
+        # Must be done after residual since it uses the primitive variable.
+        self.update_dt()
+
+        Wkp1 = self.W
+        for rk_state in range(1,5):
+            self.evaluate_residual();
+            Wkp1 = self.W - (self.dt / (5.0 - rk_state)) * self.residual / self.mesh.volume
+
+        self.dW = (Wkp1 - self.W)
+
+        #for i in range(3):
+        #    self.dW[i,1:-1] = -(self.dt[1:-1] / self.mesh.volume[1:-1]) * self.residual[i,1:-1]
 
     def evaluate_source_state(self):
-        self.p = evaluate_p(self.W[0,:], self.W[1,:], self.W[2,:], self.gamma)
         self.Q[0,:] = 0
-        self.Q[1,:] = self.p * (self.mesh.area[1:] - self.mesh.area[:-1])
+        self.Q[1,:] = self.p * np.diff(self.mesh.area)
         self.Q[2,:] = 0
     def evaluate_residual(self):
-        self.evaluate_fluxes()
+        # Update primitive variable here since it's the deepest the AD will need to go
+        #self.rho, self.u, self.p = self.evaluate_primitive_from_state(self.W)
+        self.rho = self.W[0,:]
+        self.u = self.W[1,:] / self.W[0,:]
         self.p = evaluate_p(self.W[0,:], self.W[1,:], self.W[2,:], self.gamma)
-        self.evaluate_source_state()
+        self.c = evaluate_c(self.p, self.rho, self.gamma)
 
+        self.evaluate_fluxes()
+        self.evaluate_source_state()
 
         self.residual[:,0] = 0
         self.residual[:,-1] = 0
-        self.residual[:,1:-1] = self.fluxes[:,2:-1] * (np.ones((3,1))*self.mesh.area[2:-1]) 
-                                - self.fluxes[:,1:-2] * (np.ones((3,1))*self.mesh.area[1:-2]) 
+        self.residual[:,1:-1] = self.fluxes[:,2:-1] * (np.ones((3,1))*self.mesh.area[2:-1]) \
+                                - self.fluxes[:,1:-2] * (np.ones((3,1))*self.mesh.area[1:-2]) \
                                 - self.Q[:,1:-1]
 
     def evaluate_convective_state(self):
@@ -169,21 +192,21 @@ class Solver:
         self.F[2,:] = ( self.W[2,:] + (self.gamma - 1.0) * (self.W[2,:] - rho_u_u/2.0) ) * u;
 
     def evaluate_fluxes(self):
-        self.rho, self.u, self.p = self.evaluate_primitive_from_state(self.W)
-        self.evaluate_convective_state()
-
         self.c = evaluate_c(self.p, self.rho, self.gamma)
+        self.evaluate_convective_state()
 
         u_avg = 0.5*(self.u[:-1]+self.u[1:])
         c_avg = 0.5*(self.c[:-1]+self.c[1:])
         lamb  = np.max([u_avg + c_avg, u_avg - c_avg], axis=0)
 
         self.fluxes[:,1:-1] = 0.5*((self.F[:,:-1] + self.F[:,1:]) 
-            - self.scalar_eps * lamb * (self.W[:,1:] - self.W[:,:-1]))
+            - self.sim.scalar_eps * lamb * (self.W[:,1:] - self.W[:,:-1]))
 
     def BC_inlet(self):
-        self.rho[:2], self.u[:2], self.p[:2] = self.evaluate_primitive_from_state(self.W[:,:2])
-        self.c[:2] = evaluate_c(self.p[:2], self.rho[:2], self.gamma)
+        self.rho[1] = self.W[0,1]
+        self.u[1] = self.W[1,1] / self.W[0,1]
+        self.p[1] = evaluate_p(self.W[0,1], self.W[1,1], self.W[2,1], self.gamma)
+        self.c[1] = evaluate_c(self.p[1], self.rho[1], self.gamma)
 
         if self.u[0] >= self.c[0]:
             self.residual[:,0] = 0.0
@@ -221,8 +244,11 @@ class Solver:
             self.W[2,0] = self.e[0];
 
     def BC_outlet(self):
-        self.rho[-2:], self.u[-2:], self.p[-2:] = self.evaluate_primitive_from_state(self.W[:,-2:])
-        self.c[-2:] = evaluate_c(self.p[-2:], self.rho[-2:], self.gamma)
+        #self.rho[-2:], self.u[-2:], self.p[-2:] = self.evaluate_primitive_from_state(self.W[:,-2:])
+        self.rho[-2] = self.W[0,-2]
+        self.u[-2] = self.W[1,-2] / self.W[0,-2]
+        self.p[-2] = evaluate_p(self.W[0,-2], self.W[1,-2], self.W[2,-2], self.gamma)
+        self.c[-2] = evaluate_c(self.p[-2], self.rho[-2], self.gamma)
 
         u0 = self.u[-2]; u1 = self.u[-1]
         c0 = self.c[-2]; c1 = self.c[-1]
@@ -271,26 +297,19 @@ def main():
     mesh.initialize_area_volume(0.10,0.80,6.00)
     
     q1d = Solver(mesh, sim_data)
-    plt.figure(100)
     q1d.solve_steady()
-    #q1d.step_in_time()
-    #q1d.evaluate_dw()
-    #q1d.evaluate_residual()
-    #q1d.evaluate_fluxes()
-    #cplt.plot(mesh.xh, q1d.rho[:],'s',label='rho')
-    #plt.plot(mesh.xh, q1d.u[:],'s',label='u')
-    plt.figure(100);plt.legend();plt.plot(q1d.mesh.xh, q1d.rho[:],'s')
-    plt.figure(101);plt.legend();plt.plot(q1d.mesh.xh, q1d.u[:],'s')
-    plt.figure(102);plt.legend();plt.plot(q1d.mesh.xh, q1d.p[:],'s')
-    plt.figure(200);plt.legend();plt.plot(q1d.mesh.xh, q1d.W[0,:],'s')
-    plt.figure(201);plt.legend();plt.plot(q1d.mesh.xh, q1d.W[1,:],'s')
-    plt.figure(202);plt.legend();plt.plot(q1d.mesh.xh, q1d.W[2,:],'s')
+    #plt.figure(100);plt.legend();plt.plot(q1d.mesh.xh, q1d.rho[:],'s')
+    #plt.figure(101);plt.legend();plt.plot(q1d.mesh.xh, q1d.u[:],'s')
+    #plt.figure(102);plt.legend();plt.plot(q1d.mesh.xh, q1d.p[:],'s')
+    #plt.figure(200);plt.legend();plt.plot(q1d.mesh.xh, q1d.W[0,:],'s')
+    #plt.figure(201);plt.legend();plt.plot(q1d.mesh.xh, q1d.W[1,:],'s')
+    #plt.figure(202);plt.legend();plt.plot(q1d.mesh.xh, q1d.W[2,:],'s')
 
-    plt.figure(1)
-    plt.plot(mesh.x, mesh.area,'-o')
-    plt.draw()
-    plt.pause(1)
-    input('Enter to quit')
-    plt.close()
+    #plt.figure(1)
+    #plt.plot(mesh.x, mesh.area,'-o')
+    #plt.draw()
+    #plt.pause(1)
+    #input('Enter to quit')
+    #plt.close()
 if __name__ == "__main__":
     main()
