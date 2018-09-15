@@ -2,7 +2,7 @@
 
 sim = {
 "n_elem"        : 100,
-"iterations_max": 6000,
+"iterations_max": 10000,
 "it_print"      : 20,
 "tolerance"     : 1e-14,
 

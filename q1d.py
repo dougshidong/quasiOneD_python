@@ -75,20 +75,25 @@ def evaluate_all(W, gamma):
     return rho, u, p, c, mach
 
 def evaluate_source_state(p, area):
-    Q = np.zeros([3, p.size])
-    Q[1,:] = p * np.diff(area)
-    return Q
+    #Q = np.zeros([3, p.size])
+    #Q[1,:] = p * np.diff(area)
+
+    Q = p * np.diff(area)
+    return np.array([np.zeros(p.size), Q, np.zeros(p.size)])
 def evaluate_convective_state(W, gamma):
     rho = W[0,:]
     u = W[1,:] / W[0,:]
     p = evaluate_p(W, gamma)
     e = W[2,:]
 
-    F = np.empty_like(W)
-    F[0,:] = rho
-    F[1,:] = rho*u*u + p
-    F[2,:] = ( e + p ) * u;
-    return F
+    #F = np.empty(W.shape)
+    #F[0,:] = rho
+    #F[1,:] = rho*u*u + p
+    #F[2,:] = ( e + p ) * u;
+    F0 = rho
+    F1 = rho*u*u + p
+    F2 = ( e + p ) * u;
+    return np.array([F0,F1,F2])
 
 def evaluate_fluxes(W, gamma, scalar_eps):
     rho = W[0,:]
@@ -104,8 +109,11 @@ def evaluate_fluxes(W, gamma, scalar_eps):
     #lamb  = np.max([u_avg + c_avg, u_avg - c_avg], axis=0)
     lamb  = u_avg + c_avg # u is always positive here
 
-    fluxes = np.empty([3, rho.size+1])
-    fluxes[:,1:-1] = 0.5*((F[:,:-1] + F[:,1:]) - scalar_eps * lamb * (W[:,1:] - W[:,:-1]))
+    #fluxes = np.empty([3, rho.size+1])
+    #fluxes[:,1:-1] = 0.5*((F[:,:-1] + F[:,1:]) - scalar_eps * lamb * (W[:,1:] - W[:,:-1]))
+    
+    # Returning the fluxes from 1 to n-1 to avoid array assignment for autograd
+    fluxes = 0.5*((F[:,:-1] + F[:,1:]) - scalar_eps * lamb * (W[:,1:] - W[:,:-1]))
     return fluxes
 
 #@jit(nopython=isCompiled)
@@ -207,11 +215,12 @@ def evaluate_residual(W, area, scalar_eps, gamma, inlet_total_p, inlet_total_T, 
     p = evaluate_p(W, gamma)
     c = evaluate_c(p, rho, gamma)
 
+    # Returning the fluxes from 1 to n-1 to avoid array assignment for autograd
     fluxes = evaluate_fluxes(W, gamma, scalar_eps)
     Q      = evaluate_source_state(p, area)
 
-    residual = fluxes[:,2:-1] * (np.ones((3,1))*area[2:-1]) \
-               - fluxes[:,1:-2] * (np.ones((3,1))*area[1:-2]) \
+    residual = fluxes[:,1:] * (np.ones((3,1))*area[2:-1]) \
+               - fluxes[:,:-1] * (np.ones((3,1))*area[1:-2]) \
                - Q[:,1:-1]
     return residual
 #@jit(nopython=isCompiled)
@@ -224,9 +233,12 @@ def update_dt(CFL, dx, W, gamma):
 def evaluate_dw(W, dx, area, scalar_eps, gamma, inlet_total_p, inlet_total_T, Cv, CFL, a2):
     dt = update_dt(CFL, dx, W, gamma)
 
-    dW = np.empty_like(W)
+    #dW = np.empty_like(W)
+    #new_W = np.copy(W)
+    dW = np.empty(W.shape)
+    new_W = np.empty(W.shape)
+    new_W = W
 
-    new_W = np.copy(W)
     for rk_state in range(1,5):
         residual = evaluate_residual(new_W, area, scalar_eps, gamma, inlet_total_p, inlet_total_T, Cv)
         new_W[:,1:-1] = new_W[:,1:-1] - (dt[1:-1] / dx[1:-1]) / (5.0 - rk_state) * residual
