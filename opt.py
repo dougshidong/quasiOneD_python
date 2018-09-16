@@ -3,82 +3,58 @@ import sys
 import autograd.numpy as np
 import matplotlib.pyplot as plt
 import autograd
+import adolc
+from adolc import adouble
 
 import sim_data
 import mesh
 import q1d
+import cost
+import diff
 import myplot as mplt
 
-fig_shape = 1001
+fig_area  = 1001
 fig_p     = 1002
 
-def cost(W, targetP):
-    p = q1d.evaluate_p(W, 1.4)
-    return np.sqrt(np.sum(p-targetP)**2)
-pCostpW_ad = autograd.jacobian(cost, 0)
+#pCostpW_ad = autograd.jacobian(cost, 0)
+#pRpW_ad = autograd.jacobian(q1d.evaluate_dw, 1)
 
-pCostpW_ad = autograd.jacobian(cost, 0)
-pRpW_ad = autograd.jacobian(q1d.evaluate_dw, 0)
-
-
-#input_data = sim_data.sim
-#n_elem, iterations_max, it_print, tolerance, CFL, scalar_eps, \
-#    gamma, R, Cv, inlet_total_T, inlet_total_p, inlet_mach, outlet_p, geom \
-#    = sim_data.extract_sim(input_data)
-#input_data["geom"] = sim_data.geom_target
-#x, dx, xh, area, volume = mesh.initialize_mesh(input_data["geom"], n_elem);
-#W = q1d.solver(input_data)
-#rho, u, p, c, mach = q1d.evaluate_all(W, gamma)
-#p_target = p
-#area_target = area
-#
-## Evaluate initial design
-#input_data["geom"] = sim_data.geom_initial
-#x, dx, xh, area, volume = mesh.initialize_mesh(input_data["geom"], n_elem);
-#W = q1d.solver(input_data)
-#rho, u, p, c, mach = q1d.evaluate_all(W, gamma)
-#p_current = p
-#area_current = area
-#a2 = 2.0*gamma*Cv*inlet_total_T*((gamma - 1.0) / (gamma + 1.0));
-#
-#pRpW = pRpW_ad(W, dx, area, scalar_eps, gamma, inlet_total_p, inlet_total_T, Cv, CFL, a2)
-#print(pRpR)
 
 def main():
-    input_data = sim_data.sim
-
-    n_elem, iterations_max, it_print, tolerance, CFL, scalar_eps, \
-        gamma, R, Cv, inlet_total_T, inlet_total_p, inlet_mach, outlet_p, geom \
-        = sim_data.extract_sim(input_data)
+    sim = sim_data.Simulation_data()
 
     # Create target pressure
-    input_data["geom"] = sim_data.geom_target
-    x, dx, xh, area, volume = mesh.initialize_mesh(input_data["geom"], n_elem);
-    W = q1d.solver(input_data)
-    rho, u, p, c, mach = q1d.evaluate_all(W, gamma)
+    sim.set_target_geom()
+    x, dx, xh, area, volume = mesh.initialize_mesh(sim.geom, sim.n_elem);
+    W = q1d.solver(sim)
+    rho, u, p, c, mach = q1d.evaluate_all(W, sim.gamma)
     p_target = p
     area_target = area
 
     # Evaluate initial design
-    input_data["geom"] = sim_data.geom_initial
-    x, dx, xh, area, volume = mesh.initialize_mesh(input_data["geom"], n_elem);
-    W = q1d.solver(input_data)
-    rho, u, p, c, mach = q1d.evaluate_all(W, gamma)
+    sim.set_initial_geom()
+    x, dx, xh, area, volume = mesh.initialize_mesh(sim.geom, sim.n_elem);
+    W = q1d.solver(sim)
+    rho, u, p, c, mach = q1d.evaluate_all(W, sim.gamma)
     p_current = p
     area_current = area
 
-    print(cost(W, p_target))
-    print(pCostpW_ad(W,p_target))
-    a2 = 2.0*gamma*Cv*inlet_total_T*((gamma - 1.0) / (gamma + 1.0));
+    cost_f = cost.inverse_pressure_design(W, p_target)
+    print(cost_f)
+
+    derivatives = diff.Differentiation()
+    pCostpW = derivatives.pCostpW_adolc(W, p_target)
+    print("pCostpW \n", pCostpW)
+
+    pRpW = derivatives.pRpW_adolc(sim, W, area)
+    print("Jacobian pRpW \n", pRpW)
+
+
     #print(f(ad.seed(x)).dvalue)
-    #print(pRpW(W, dx, area, scalar_eps, gamma, inlet_total_p, inlet_total_T, Cv, CFL, a2))
+    #print("pRpW \n",pRpW_ad(sim, W, dx, area))
 
-
-    mplt.plot(xh, p_current, fig_id=fig_p, title='Pressure', lab='Current')
-    mplt.plot(xh, p_target,  fig_id=fig_p, title='Pressure', lab='Target')
-
-    mplt.plot(x, area_current, fig_id=fig_shape, title='Shape', lab='Current')
-    mplt.plot(x, area_target,  fig_id=fig_shape, title='Shape', lab='Target')
+    mplt.plot_compare(xh, p_current, p_target, fig_i=fig_p, title_i='Pressure')
+    mplt.plot_compare(x, area_current, area_target, fig_i=fig_area, title_i='Area')
     #plt.figure(1)
     #plt.plot(mesh.x, mesh.area,'-o')
     plt.draw()
